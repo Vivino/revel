@@ -198,7 +198,6 @@ func runShutdownHooks() {
 	}
 }
 
-var startupHooks []func()
 var shutdownHooks []func()
 
 type StartupHooks []StartupHook
