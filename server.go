@@ -5,11 +5,11 @@
 package revel
 
 import (
+	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
-	"fmt"
-	"os"
 )
 
 // Revel's variables server, router, etc
@@ -71,9 +71,9 @@ func Run(port int) {
 	CurrentEngine.Event(ENGINE_STARTED, nil)
 	// This is needed for the harness to recognize that the server is started, it looks for the word
 	// "Listening" in the stdout stream
-	fmt.Fprintf(os.Stdout,"Listening on.. %s\n", ServerEngineInit.Address)
+	fmt.Fprintf(os.Stdout, "Listening on.. %s\n", ServerEngineInit.Address)
 	CurrentEngine.Start()
-	CurrentEngine.Event(ENGINE_SHUTDOWN, nil)
+	CurrentEngine.Event(ENGINE_SHUTDOWN, runShutdownHooks)
 }
 
 func InitServerEngine(port int, serverEngine string) {
@@ -127,6 +127,12 @@ func runStartupHooks() {
 	}
 }
 
+func runShutdownHooks() {
+	for _, hook := range shutdownHooks {
+		hook()
+	}
+}
+
 type StartupHook struct {
 	order int
 	f     func()
@@ -135,6 +141,8 @@ type StartupHook struct {
 type StartupHooks []StartupHook
 
 var startupHooks StartupHooks
+
+var shutdownHooks []func()
 
 func (slice StartupHooks) Len() int {
 	return len(slice)
@@ -190,4 +198,8 @@ func OnAppStart(f func(), order ...int) {
 		o = order[0]
 	}
 	startupHooks = append(startupHooks, StartupHook{order: o, f: f})
+}
+
+func OnAppShutdown(f func()) {
+	shutdownHooks = append(shutdownHooks, f)
 }
