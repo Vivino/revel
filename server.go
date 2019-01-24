@@ -37,19 +37,19 @@ func handle(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, maxRequestSize)
 	}
 
-	upgrade := r.Header.Get("Upgrade")
-	if upgrade == "websocket" || upgrade == "Websocket" {
-		websocket.Handler(func(ws *websocket.Conn) {
-			//Override default Read/Write timeout with sane value for a web socket request
-			if err := ws.SetDeadline(time.Now().Add(time.Hour * 24)); err != nil {
-				ERROR.Println("SetDeadLine failed:", err)
-			}
-			r.Method = "WS"
-			handleInternal(w, r, ws)
-		}).ServeHTTP(w, r)
-	} else {
-		handleInternal(w, r, nil)
-	}
+	// upgrade := r.Header.Get("Upgrade")
+	// if upgrade == "websocket" || upgrade == "Websocket" {
+	// 	websocket.Handler(func(ws *websocket.Conn) {
+	// 		//Override default Read/Write timeout with sane value for a web socket request
+	// 		if err := ws.SetDeadline(time.Now().Add(time.Hour * 24)); err != nil {
+	// 			ERROR.Println("SetDeadLine failed:", err)
+	// 		}
+	// 		r.Method = "WS"
+	// 		handleInternal(w, r, ws)
+	// 	}).ServeHTTP(w, r)
+	// } else {
+	handleInternal(w, r, nil)
+	// }
 }
 
 func handleInternal(w http.ResponseWriter, r *http.Request, ws *websocket.Conn) {
