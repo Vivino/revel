@@ -1,13 +1,17 @@
+// Copyright (c) 2012-2016 The Revel Framework Authors, All rights reserved.
+// Revel Framework source code and usage is governed by a MIT style
+// license that can be found in the LICENSE file.
+
 package revel
 
 import (
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 	"sync"
 
-	"gopkg.in/fsnotify.v1"
+	"github.com/fsnotify/fsnotify"
+	"time"
 )
 
 // Listener is an interface for receivers of filesystem events.
@@ -27,18 +31,27 @@ type DiscerningListener interface {
 // Watcher allows listeners to register to be notified of changes under a given
 // directory.
 type Watcher struct {
-	// Parallel arrays of watcher/listener pairs.
-	watchers     []*fsnotify.Watcher
-	listeners    []Listener
-	forceRefresh bool
-	lastError    int
-	notifyMutex  sync.Mutex
+	serial              bool                // true to process events in serial
+	watchers            []*fsnotify.Watcher // Parallel arrays of watcher/listener pairs.
+	listeners           []Listener          // List of listeners for watcher
+	forceRefresh        bool                // True to force the refresh
+	lastError           int                 // The last error found
+	notifyMutex         sync.Mutex          // The mutext to serialize watches
+	refreshTimer        *time.Timer         // The timer to countdown the next refresh
+	timerMutex          *sync.Mutex         // A mutex to prevent concurrent updates
+	refreshChannel      chan *Error         // The error channel to listen to when waiting for a refresh
+	refreshChannelCount int                 // The number of clients listening on the channel
+	refreshTimerMS      time.Duration       // The number of milliseconds between refreshing builds
 }
 
 func NewWatcher() *Watcher {
 	return &Watcher{
-		forceRefresh: true,
-		lastError:    -1,
+		forceRefresh:        true,
+		lastError:           -1,
+		refreshTimerMS:      time.Duration(Config.IntDefault("watch.rebuild.delay", 10)),
+		timerMutex:          &sync.Mutex{},
+		refreshChannel:      make(chan *Error, 10),
+		refreshChannelCount: 0,
 	}
 }
 
@@ -46,13 +59,14 @@ func NewWatcher() *Watcher {
 func (w *Watcher) Listen(listener Listener, roots ...string) {
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		ERROR.Fatal(err)
+		utilLog.Fatal("Watcher: Failed to create watcher", "error", err)
 	}
 
 	// Replace the unbuffered Event channel with a buffered one.
 	// Otherwise multiple change events only come out one at a time, across
 	// multiple page views.  (There appears no way to "pump" the events out of
 	// the watcher)
+	// This causes a notification when you do a check in go, since you are modifying a buffer in use
 	watcher.Events = make(chan fsnotify.Event, 100)
 	watcher.Errors = make(chan error, 10)
 
@@ -61,7 +75,8 @@ func (w *Watcher) Listen(listener Listener, roots ...string) {
 		// is the directory / file a symlink?
 		f, err := os.Lstat(p)
 		if err == nil && f.Mode()&os.ModeSymlink == os.ModeSymlink {
-			realPath, err := filepath.EvalSymlinks(p)
+			var realPath string
+			realPath, err = filepath.EvalSymlinks(p)
 			if err != nil {
 				panic(err)
 			}
@@ -70,7 +85,7 @@ func (w *Watcher) Listen(listener Listener, roots ...string) {
 
 		fi, err := os.Stat(p)
 		if err != nil {
-			ERROR.Println("Failed to stat watched path", p, ":", err)
+			utilLog.Error("Watcher: Failed to stat watched path, code will continue but auto updates will not work", "path", p, "error", err)
 			continue
 		}
 
@@ -78,7 +93,7 @@ func (w *Watcher) Listen(listener Listener, roots ...string) {
 		if !fi.IsDir() {
 			err = watcher.Add(p)
 			if err != nil {
-				ERROR.Println("Failed to watch", p, ":", err)
+				utilLog.Error("Watcher: Failed to watch, code will continue but auto updates will not work", "path", p, "error", err)
 			}
 			continue
 		}
@@ -87,7 +102,7 @@ func (w *Watcher) Listen(listener Listener, roots ...string) {
 
 		watcherWalker = func(path string, info os.FileInfo, err error) error {
 			if err != nil {
-				ERROR.Println("Error walking path:", err)
+				utilLog.Error("Watcher: Error walking path:", "error", err)
 				return nil
 			}
 
@@ -98,9 +113,9 @@ func (w *Watcher) Listen(listener Listener, roots ...string) {
 					}
 				}
 
-				err = watcher.Add(path)
+				err := watcher.Add(path)
 				if err != nil {
-					ERROR.Println("Failed to watch", path, ":", err)
+					utilLog.Error("Watcher: Failed to watch this path, code will continue but auto updates will not work", "path", path, "error", err)
 				}
 			}
 			return nil
@@ -109,7 +124,7 @@ func (w *Watcher) Listen(listener Listener, roots ...string) {
 		// Else, walk the directory tree.
 		err = Walk(p, watcherWalker)
 		if err != nil {
-			ERROR.Println("Failed to walk directory", p, ":", err)
+			utilLog.Error("Watcher: Failed to walk directory, code will continue but auto updates will not work", "path", p, "error", err)
 		}
 	}
 
@@ -124,14 +139,26 @@ func (w *Watcher) Listen(listener Listener, roots ...string) {
 
 // NotifyWhenUpdated notifies the watcher when a file event is received.
 func (w *Watcher) NotifyWhenUpdated(listener Listener, watcher *fsnotify.Watcher) {
+
 	for {
 		select {
 		case ev := <-watcher.Events:
 			if w.rebuildRequired(ev, listener) {
 				// Serialize listener.Refresh() calls.
-				w.notifyMutex.Lock()
-				listener.Refresh()
-				w.notifyMutex.Unlock()
+				if w.serial {
+					// Serialize listener.Refresh() calls.
+					w.notifyMutex.Lock()
+
+					if err := listener.Refresh(); err != nil {
+						utilLog.Error("Watcher: Listener refresh reported error:", "error", err)
+					}
+					w.notifyMutex.Unlock()
+				} else {
+					// Run refresh in parallel
+					go func() {
+						w.notifyInProcess(listener)
+					}()
+				}
 			}
 		case <-watcher.Errors:
 			continue
@@ -167,7 +194,13 @@ func (w *Watcher) Notify() *Error {
 		}
 
 		if w.forceRefresh || refresh || w.lastError == i {
-			err := listener.Refresh()
+			var err *Error
+			if w.serial {
+				err = listener.Refresh()
+			} else {
+				err = w.notifyInProcess(listener)
+			}
+
 			if err != nil {
 				w.lastError = i
 				return err
@@ -178,6 +211,57 @@ func (w *Watcher) Notify() *Error {
 	w.forceRefresh = false
 	w.lastError = -1
 	return nil
+}
+
+// Build a queue for refresh notifications
+// this will not return until one of the queue completes
+func (w *Watcher) notifyInProcess(listener Listener) (err *Error) {
+	shouldReturn := false
+	// This code block ensures that either a timer is created
+	// or that a process would be added the the h.refreshChannel
+	func() {
+		w.timerMutex.Lock()
+		defer w.timerMutex.Unlock()
+		// If we are in the process of a rebuild, forceRefresh will always be true
+		w.forceRefresh = true
+		if w.refreshTimer != nil {
+			utilLog.Info("Found existing timer running, resetting")
+			w.refreshTimer.Reset(time.Millisecond * w.refreshTimerMS)
+			shouldReturn = true
+			w.refreshChannelCount++
+		} else {
+			w.refreshTimer = time.NewTimer(time.Millisecond * w.refreshTimerMS)
+		}
+	}()
+
+	// If another process is already waiting for the timer this one
+	// only needs to return the output from the channel
+	if shouldReturn {
+		return <-w.refreshChannel
+	}
+	utilLog.Info("Waiting for refresh timer to expire")
+	<-w.refreshTimer.C
+	w.timerMutex.Lock()
+
+	// Ensure the queue is properly dispatched even if a panic occurs
+	defer func() {
+		for x := 0; x < w.refreshChannelCount; x++ {
+			w.refreshChannel <- err
+		}
+		w.refreshChannelCount = 0
+		w.refreshTimer = nil
+		w.timerMutex.Unlock()
+	}()
+
+	err = listener.Refresh()
+	if err != nil {
+		utilLog.Info("Watcher: Recording error last build, setting rebuild on", "error", err)
+	} else {
+		w.lastError = -1
+		w.forceRefresh = false
+	}
+	utilLog.Info("Rebuilt, result", "error", err)
+	return
 }
 
 // If watch.mode is set to eager, the application is rebuilt immediately
@@ -191,7 +275,7 @@ func (w *Watcher) eagerRebuildEnabled() bool {
 
 func (w *Watcher) rebuildRequired(ev fsnotify.Event, listener Listener) bool {
 	// Ignore changes to dotfiles.
-	if strings.HasPrefix(path.Base(ev.Name), ".") {
+	if strings.HasPrefix(filepath.Base(ev.Name), ".") {
 		return false
 	}
 

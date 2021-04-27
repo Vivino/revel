@@ -1,6 +1,12 @@
+// Copyright (c) 2012-2016 The Revel Framework Authors, All rights reserved.
+// Revel Framework source code and usage is governed by a MIT style
+// license that can be found in the LICENSE file.
+
 package revel
 
 import (
+	"fmt"
+	"net/http"
 	"runtime/debug"
 )
 
@@ -19,14 +25,26 @@ func PanicFilter(c *Controller, fc []Filter) {
 // It cleans up the stack trace, logs it, and displays an error page.
 func handleInvocationPanic(c *Controller, err interface{}) {
 	error := NewErrorFromPanic(err)
+	if error != nil {
+		utilLog.Error("PanicFilter: Caught panic", "error", err, "stack", error.Stack)
+		if DevMode {
+			fmt.Println(err)
+			fmt.Println(error.Stack)
+		}
+	} else {
+		utilLog.Error("PanicFilter: Caught panic, unable to determine stack location", "error", err, "stack", string(debug.Stack()))
+		if DevMode {
+			fmt.Println(err)
+			fmt.Println("stack", string(debug.Stack()))
+		}
+	}
+
 	if error == nil && DevMode {
 		// Only show the sensitive information in the debug stack trace in development mode, not production
-		ERROR.Print(err, "\n", string(debug.Stack()))
-		c.Response.Out.WriteHeader(500)
-		c.Response.Out.Write(debug.Stack())
+		c.Response.SetStatus(http.StatusInternalServerError)
+		_, _ = c.Response.GetWriter().Write(debug.Stack())
 		return
 	}
 
-	ERROR.Print(err, "\n", error.Stack)
 	c.Result = c.RenderError(error)
 }

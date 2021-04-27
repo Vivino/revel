@@ -1,6 +1,11 @@
+// Copyright (c) 2012-2016 The Revel Framework Authors, All rights reserved.
+// Revel Framework source code and usage is governed by a MIT style
+// license that can be found in the LICENSE file.
+
 package revel
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -39,7 +44,9 @@ type Binder struct {
 	Unbind func(output map[string]string, name string, val interface{})
 }
 
-// An adapter for easily making one-key-value binders.
+var binderLog = RevelLog.New("section", "binder")
+
+// ValueBinder is adapter for easily making one-key-value binders.
 func ValueBinder(f func(value string, typ reflect.Type) reflect.Value) func(*Params, string, reflect.Type) reflect.Value {
 	return func(params *Params, name string, typ reflect.Type) reflect.Value {
 		vals, ok := params.Values[name]
@@ -50,11 +57,13 @@ func ValueBinder(f func(value string, typ reflect.Type) reflect.Value) func(*Par
 	}
 }
 
+// Revel's default date and time constants
 const (
-	DEFAULT_DATE_FORMAT     = "2006-01-02"
-	DEFAULT_DATETIME_FORMAT = "2006-01-02 15:04"
+	DefaultDateFormat     = "2006-01-02"
+	DefaultDateTimeFormat = "2006-01-02 15:04"
 )
 
+// Binders type and kind definition
 var (
 	// These are the lookups to find a Binder for any type of data.
 	// The most specific binder found will be used (Type before Kind)
@@ -67,6 +76,7 @@ var (
 
 	DateFormat     string
 	DateTimeFormat string
+	TimeZone       = time.UTC
 
 	IntBinder = Binder{
 		Bind: ValueBinder(func(val string, typ reflect.Type) reflect.Value {
@@ -75,7 +85,7 @@ var (
 			}
 			intValue, err := strconv.ParseInt(val, 10, 64)
 			if err != nil {
-				WARN.Println(err)
+				binderLog.Warn("IntBinder Conversion Error", "error", err)
 				return reflect.Zero(typ)
 			}
 			pValue := reflect.New(typ)
@@ -94,7 +104,7 @@ var (
 			}
 			uintValue, err := strconv.ParseUint(val, 10, 64)
 			if err != nil {
-				WARN.Println(err)
+				binderLog.Warn("UintBinder Conversion Error", "error", err)
 				return reflect.Zero(typ)
 			}
 			pValue := reflect.New(typ)
@@ -113,7 +123,7 @@ var (
 			}
 			floatValue, err := strconv.ParseFloat(val, 64)
 			if err != nil {
-				WARN.Println(err)
+				binderLog.Warn("FloatBinder Conversion Error", "error", err)
 				return reflect.Zero(typ)
 			}
 			pValue := reflect.New(typ)
@@ -134,19 +144,11 @@ var (
 		},
 	}
 
-	// Booleans support a couple different value formats:
-	// "true" and "false"
-	// "on" and "" (a checkbox)
-	// "1" and "0" (why not)
+	// Booleans support a various value formats,
+	// refer `revel.Atob` method.
 	BoolBinder = Binder{
 		Bind: ValueBinder(func(val string, typ reflect.Type) reflect.Value {
-			v := strings.TrimSpace(strings.ToLower(val))
-			switch v {
-			case "true", "on", "1":
-				return reflect.ValueOf(true)
-			}
-			// Return false by default.
-			return reflect.ValueOf(false)
+			return reflect.ValueOf(Atob(val))
 		}),
 		Unbind: func(output map[string]string, name string, val interface{}) {
 			output[name] = fmt.Sprintf("%t", val)
@@ -155,7 +157,12 @@ var (
 
 	PointerBinder = Binder{
 		Bind: func(params *Params, name string, typ reflect.Type) reflect.Value {
-			return Bind(params, name, typ.Elem()).Addr()
+			v := Bind(params, name, typ.Elem())
+			if v.CanAddr() {
+				return v.Addr()
+			}
+
+			return v
 		},
 		Unbind: func(output map[string]string, name string, val interface{}) {
 			Unbind(output, name, reflect.ValueOf(val).Elem().Interface())
@@ -165,7 +172,7 @@ var (
 	TimeBinder = Binder{
 		Bind: ValueBinder(func(val string, typ reflect.Type) reflect.Value {
 			for _, f := range TimeFormats {
-				if r, err := time.Parse(f, val); err == nil {
+				if r, err := time.ParseInLocation(f, val, TimeZone); err == nil {
 					return reflect.ValueOf(r)
 				}
 			}
@@ -190,46 +197,6 @@ var (
 	}
 )
 
-// Sadly, the binder lookups can not be declared initialized -- that results in
-// an "initialization loop" compile error.
-func init() {
-	KindBinders[reflect.Int] = IntBinder
-	KindBinders[reflect.Int8] = IntBinder
-	KindBinders[reflect.Int16] = IntBinder
-	KindBinders[reflect.Int32] = IntBinder
-	KindBinders[reflect.Int64] = IntBinder
-
-	KindBinders[reflect.Uint] = UintBinder
-	KindBinders[reflect.Uint8] = UintBinder
-	KindBinders[reflect.Uint16] = UintBinder
-	KindBinders[reflect.Uint32] = UintBinder
-	KindBinders[reflect.Uint64] = UintBinder
-
-	KindBinders[reflect.Float32] = FloatBinder
-	KindBinders[reflect.Float64] = FloatBinder
-
-	KindBinders[reflect.String] = StringBinder
-	KindBinders[reflect.Bool] = BoolBinder
-	KindBinders[reflect.Slice] = Binder{bindSlice, unbindSlice}
-	KindBinders[reflect.Struct] = Binder{bindStruct, unbindStruct}
-	KindBinders[reflect.Ptr] = PointerBinder
-	KindBinders[reflect.Map] = MapBinder
-
-	TypeBinders[reflect.TypeOf(time.Time{})] = TimeBinder
-
-	// Uploads
-	TypeBinders[reflect.TypeOf(&os.File{})] = Binder{bindFile, nil}
-	TypeBinders[reflect.TypeOf([]byte{})] = Binder{bindByteArray, nil}
-	TypeBinders[reflect.TypeOf((*io.Reader)(nil)).Elem()] = Binder{bindReadSeeker, nil}
-	TypeBinders[reflect.TypeOf((*io.ReadSeeker)(nil)).Elem()] = Binder{bindReadSeeker, nil}
-
-	OnAppStart(func() {
-		DateTimeFormat = Config.StringDefault("format.datetime", DEFAULT_DATETIME_FORMAT)
-		DateFormat = Config.StringDefault("format.date", DEFAULT_DATE_FORMAT)
-		TimeFormats = append(TimeFormats, DateTimeFormat, DateFormat)
-	})
-}
-
 // Used to keep track of the index for individual keyvalues.
 type sliceValue struct {
 	index int           // Index extracted from brackets.  If -1, no index was provided.
@@ -245,6 +212,8 @@ func bindSlice(params *Params, name string, typ reflect.Type) reflect.Value {
 	maxIndex := -1
 	numNoIndex := 0
 	sliceValues := []sliceValue{}
+
+	maxIndexBound := Config.IntDefault("params.max_index", 4096)
 
 	// Factor out the common slice logic (between form values and files).
 	processElement := func(key string, vals []string, files []*multipart.FileHeader) {
@@ -262,6 +231,11 @@ func bindSlice(params *Params, name string, typ reflect.Type) reflect.Value {
 
 		// Handle the indexed case.
 		if index > -1 {
+			// Just ignore illegal index, fix issue #1424
+			if index > maxIndexBound {
+				binderLog.Error("Ignoring parameter for security reason", "index", index, "key", key)
+				return
+			}
 			if index > maxIndex {
 				maxIndex = index
 			}
@@ -327,9 +301,17 @@ func unbindSlice(output map[string]string, name string, val interface{}) {
 }
 
 func bindStruct(params *Params, name string, typ reflect.Type) reflect.Value {
-	result := reflect.New(typ).Elem()
+	resultPointer := reflect.New(typ)
+	result := resultPointer.Elem()
+	if params.JSON != nil {
+		// Try to inject the response as a json into the created result
+		if err := json.Unmarshal(params.JSON, resultPointer.Interface()); err != nil {
+			binderLog.Error("bindStruct Unable to unmarshal request", "name", name, "error", err, "data", string(params.JSON))
+		}
+		return result
+	}
 	fieldValues := make(map[string]reflect.Value)
-	for key, _ := range params.Values {
+	for key := range params.Values {
 		if !strings.HasPrefix(key, name+".") {
 			continue
 		}
@@ -344,11 +326,11 @@ func bindStruct(params *Params, name string, typ reflect.Type) reflect.Value {
 			// Time to bind this field.  Get it and make sure we can set it.
 			fieldValue := result.FieldByName(fieldName)
 			if !fieldValue.IsValid() {
-				WARN.Println("W: bindStruct: Field not found:", fieldName)
+				binderLog.Warn("bindStruct Field not found", "name", fieldName)
 				continue
 			}
 			if !fieldValue.CanSet() {
-				WARN.Println("W: bindStruct: Field not settable:", fieldName)
+				binderLog.Warn("bindStruct Field not settable", "name", fieldName)
 				continue
 			}
 			boundVal := Bind(params, key[:len(name)+1+fieldLen], fieldValue.Type())
@@ -381,7 +363,7 @@ func getMultipartFile(params *Params, name string) multipart.File {
 		if err == nil {
 			return file
 		}
-		WARN.Println("Failed to open uploaded file", name, ":", err)
+		binderLog.Warn("getMultipartFile: Failed to open uploaded file", "name", name, "error", err)
 	}
 	return nil
 }
@@ -400,7 +382,7 @@ func bindFile(params *Params, name string, typ reflect.Type) reflect.Value {
 	// Otherwise, have to store it.
 	tmpFile, err := ioutil.TempFile("", "revel-upload")
 	if err != nil {
-		WARN.Println("Failed to create a temp file to store upload:", err)
+		binderLog.Warn("bindFile: Failed to create a temp file to store upload", "name", name, "error", err)
 		return reflect.Zero(typ)
 	}
 
@@ -409,13 +391,13 @@ func bindFile(params *Params, name string, typ reflect.Type) reflect.Value {
 
 	_, err = io.Copy(tmpFile, reader)
 	if err != nil {
-		WARN.Println("Failed to copy upload to temp file:", err)
+		binderLog.Warn("bindFile: Failed to copy upload to temp file", "name", name, "error", err)
 		return reflect.Zero(typ)
 	}
 
 	_, err = tmpFile.Seek(0, 0)
 	if err != nil {
-		WARN.Println("Failed to seek to beginning of temp file:", err)
+		binderLog.Warn("bindFile: Failed to seek to beginning of temp file", "name", name, "error", err)
 		return reflect.Zero(typ)
 	}
 
@@ -428,7 +410,7 @@ func bindByteArray(params *Params, name string, typ reflect.Type) reflect.Value 
 		if err == nil {
 			return reflect.ValueOf(b)
 		}
-		WARN.Println("Error reading uploaded file contents:", err)
+		binderLog.Warn("bindByteArray: Error reading uploaded file contents", "name", name, "error", err)
 	}
 	return reflect.Zero(typ)
 }
@@ -444,17 +426,37 @@ func bindReadSeeker(params *Params, name string, typ reflect.Type) reflect.Value
 //   params["a[5]"]=foo, name="a", typ=map[int]string => map[int]string{5: "foo"}
 func bindMap(params *Params, name string, typ reflect.Type) reflect.Value {
 	var (
-		result    = reflect.MakeMap(typ)
 		keyType   = typ.Key()
 		valueType = typ.Elem()
+		resultPtr = reflect.New(reflect.MapOf(keyType, valueType))
+		result    = resultPtr.Elem()
 	)
-	for paramName, values := range params.Values {
-		if !strings.HasPrefix(paramName, name+"[") || paramName[len(paramName)-1] != ']' {
+	result.Set(reflect.MakeMap(typ))
+	if params.JSON != nil {
+		// Try to inject the response as a json into the created result
+		if err := json.Unmarshal(params.JSON, resultPtr.Interface()); err != nil {
+			binderLog.Warn("bindMap: Unable to unmarshal request", "name", name, "error", err)
+		}
+		return result
+	}
+
+	for paramName := range params.Values {
+		// The paramName string must start with the value in the "name" parameter,
+		// otherwise there is no way the parameter is part of the map
+		if !strings.HasPrefix(paramName, name) {
 			continue
 		}
 
-		key := paramName[len(name)+1 : len(paramName)-1]
-		result.SetMapIndex(BindValue(key, keyType), BindValue(values[0], valueType))
+		suffix := paramName[len(name)+1:]
+		fieldName := nextKey(suffix)
+		if fieldName != "" {
+			fieldName = fieldName[:len(fieldName)-1]
+		}
+		if !strings.HasPrefix(paramName, name+"["+fieldName+"]") {
+			continue
+		}
+
+		result.SetMapIndex(BindValue(fieldName, keyType), Bind(params, name+"["+fieldName+"]", valueType))
 	}
 	return result
 }
@@ -490,7 +492,7 @@ func Unbind(output map[string]string, name string, val interface{}) {
 		if binder.Unbind != nil {
 			binder.Unbind(output, name, val)
 		} else {
-			ERROR.Printf("revel/binder: can not unbind %s=%s", name, val)
+			binderLog.Error("Unbind: Unable to unmarshal request", "name", name, "value", val)
 		}
 	}
 }
@@ -500,9 +502,49 @@ func binderForType(typ reflect.Type) (Binder, bool) {
 	if !ok {
 		binder, ok = KindBinders[typ.Kind()]
 		if !ok {
-			WARN.Println("revel/binder: no binder for type:", typ)
+			binderLog.Error("binderForType: no binder for type", "type", typ)
 			return Binder{}, false
 		}
 	}
 	return binder, true
+}
+
+// Sadly, the binder lookups can not be declared initialized -- that results in
+// an "initialization loop" compile error.
+func init() {
+	KindBinders[reflect.Int] = IntBinder
+	KindBinders[reflect.Int8] = IntBinder
+	KindBinders[reflect.Int16] = IntBinder
+	KindBinders[reflect.Int32] = IntBinder
+	KindBinders[reflect.Int64] = IntBinder
+
+	KindBinders[reflect.Uint] = UintBinder
+	KindBinders[reflect.Uint8] = UintBinder
+	KindBinders[reflect.Uint16] = UintBinder
+	KindBinders[reflect.Uint32] = UintBinder
+	KindBinders[reflect.Uint64] = UintBinder
+
+	KindBinders[reflect.Float32] = FloatBinder
+	KindBinders[reflect.Float64] = FloatBinder
+
+	KindBinders[reflect.String] = StringBinder
+	KindBinders[reflect.Bool] = BoolBinder
+	KindBinders[reflect.Slice] = Binder{bindSlice, unbindSlice}
+	KindBinders[reflect.Struct] = Binder{bindStruct, unbindStruct}
+	KindBinders[reflect.Ptr] = PointerBinder
+	KindBinders[reflect.Map] = MapBinder
+
+	TypeBinders[reflect.TypeOf(time.Time{})] = TimeBinder
+
+	// Uploads
+	TypeBinders[reflect.TypeOf(&os.File{})] = Binder{bindFile, nil}
+	TypeBinders[reflect.TypeOf([]byte{})] = Binder{bindByteArray, nil}
+	TypeBinders[reflect.TypeOf((*io.Reader)(nil)).Elem()] = Binder{bindReadSeeker, nil}
+	TypeBinders[reflect.TypeOf((*io.ReadSeeker)(nil)).Elem()] = Binder{bindReadSeeker, nil}
+
+	OnAppStart(func() {
+		DateTimeFormat = Config.StringDefault("format.datetime", DefaultDateTimeFormat)
+		DateFormat = Config.StringDefault("format.date", DefaultDateFormat)
+		TimeFormats = append(TimeFormats, DateTimeFormat, DateFormat)
+	})
 }

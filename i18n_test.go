@@ -1,13 +1,17 @@
+// Copyright (c) 2012-2016 The Revel Framework Authors, All rights reserved.
+// Revel Framework source code and usage is governed by a MIT style
+// license that can be found in the LICENSE file.
+
 package revel
 
 import (
-	"io/ioutil"
-	"log"
+	"html/template"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/revel/config"
+	"github.com/revel/revel/logger"
 )
 
 const (
@@ -68,6 +72,14 @@ func TestI18nMessage(t *testing.T) {
 	if message := Message("nl", "unknown message"); message != "??? unknown message ???" {
 		t.Error("Message 'unknown message' is not supposed to exist")
 	}
+	// XSS
+	if message := Message("en", "arguments.string", "<img src=a onerror=alert(1) />"); message != "My name is &lt;img src=a onerror=alert(1) /&gt;" {
+		t.Error("XSS protection for messages is broken:", message)
+	}
+	// Avoid escaping HTML
+	if message := Message("en", "arguments.string", template.HTML("<img src=a onerror=alert(1) />")); message != "My name is <img src=a onerror=alert(1) />" {
+		t.Error("Passing safe HTML to message is broken:", message)
+	}
 }
 
 func TestI18nMessageWithDefaultLocale(t *testing.T) {
@@ -85,32 +97,32 @@ func TestI18nMessageWithDefaultLocale(t *testing.T) {
 func TestHasLocaleCookie(t *testing.T) {
 	loadTestI18nConfig(t)
 
-	if found, value := hasLocaleCookie(buildRequestWithCookie("APP_LANG", "en")); !found {
+	if found, value := hasLocaleCookie(buildRequestWithCookie("APP_LANG", "en").Request); !found {
 		t.Errorf("Expected %s cookie with value '%s' but found nothing or unexpected value '%s'", "APP_LANG", "en", value)
 	}
-	if found, value := hasLocaleCookie(buildRequestWithCookie("APP_LANG", "en-US")); !found {
+	if found, value := hasLocaleCookie(buildRequestWithCookie("APP_LANG", "en-US").Request); !found {
 		t.Errorf("Expected %s cookie with value '%s' but found nothing or unexpected value '%s'", "APP_LANG", "en-US", value)
 	}
-	if found, _ := hasLocaleCookie(buildRequestWithCookie("DOESNT_EXIST", "en-US")); found {
+	if found, _ := hasLocaleCookie(buildRequestWithCookie("DOESNT_EXIST", "en-US").Request); found {
 		t.Errorf("Expected %s cookie to not exist, but apparently it does", "DOESNT_EXIST")
 	}
 }
 
 func TestHasLocaleCookieWithInvalidConfig(t *testing.T) {
 	loadTestI18nConfigWithoutLanguageCookieOption(t)
-	if found, _ := hasLocaleCookie(buildRequestWithCookie("APP_LANG", "en-US")); found {
+	if found, _ := hasLocaleCookie(buildRequestWithCookie("APP_LANG", "en-US").Request); found {
 		t.Errorf("Expected %s cookie to not exist because the configured name is missing", "APP_LANG")
 	}
-	if found, _ := hasLocaleCookie(buildRequestWithCookie("REVEL_LANG", "en-US")); !found {
+	if found, _ := hasLocaleCookie(buildRequestWithCookie("REVEL_LANG", "en-US").Request); !found {
 		t.Errorf("Expected %s cookie to exist", "REVEL_LANG")
 	}
 }
 
 func TestHasAcceptLanguageHeader(t *testing.T) {
-	if found, value := hasAcceptLanguageHeader(buildRequestWithAcceptLanguages("en-US")); !found && value != "en-US" {
+	if found, value := hasAcceptLanguageHeader(buildRequestWithAcceptLanguages("en-US").Request); !found && value != "en-US" {
 		t.Errorf("Expected to find Accept-Language header with value '%s', found '%s' instead", "en-US", value)
 	}
-	if found, value := hasAcceptLanguageHeader(buildRequestWithAcceptLanguages("en-GB", "en-US", "nl")); !found && value != "en-GB" {
+	if found, value := hasAcceptLanguageHeader(buildRequestWithAcceptLanguages("en-GB", "en-US", "nl").Request); !found && value != "en-GB" {
 		t.Errorf("Expected to find Accept-Language header with value '%s', found '%s' instead", "en-GB", value)
 	}
 }
@@ -118,17 +130,17 @@ func TestHasAcceptLanguageHeader(t *testing.T) {
 func TestBeforeRequest(t *testing.T) {
 	loadTestI18nConfig(t)
 
-	c := NewController(buildEmptyRequest(), nil)
+	c := buildEmptyRequest()
 	if I18nFilter(c, NilChain); c.Request.Locale != "" {
 		t.Errorf("Expected to find current language '%s' in controller, found '%s' instead", "", c.Request.Locale)
 	}
 
-	c = NewController(buildRequestWithCookie("APP_LANG", "en-US"), nil)
+	c = buildRequestWithCookie("APP_LANG", "en-US")
 	if I18nFilter(c, NilChain); c.Request.Locale != "en-US" {
 		t.Errorf("Expected to find current language '%s' in controller, found '%s' instead", "en-US", c.Request.Locale)
 	}
 
-	c = NewController(buildRequestWithAcceptLanguages("en-GB", "en-US"), nil)
+	c = buildRequestWithAcceptLanguages("en-GB", "en-US")
 	if I18nFilter(c, NilChain); c.Request.Locale != "en-GB" {
 		t.Errorf("Expected to find current language '%s' in controller, found '%s' instead", "en-GB", c.Request.Locale)
 	}
@@ -153,7 +165,11 @@ func TestI18nMessageUnknownValueFormat(t *testing.T) {
 }
 
 func BenchmarkI18nLoadMessages(b *testing.B) {
-	excludeFromTimer(b, func() { TRACE = log.New(ioutil.Discard, "", 0) })
+	excludeFromTimer(b, func() {
+		RevelLog.SetHandler(logger.FuncHandler(func(r *logger.Record) error {
+			return nil
+		}))
+	})
 
 	for i := 0; i < b.N; i++ {
 		loadMessages(testDataPath)
@@ -167,7 +183,12 @@ func BenchmarkI18nMessage(b *testing.B) {
 }
 
 func BenchmarkI18nMessageWithArguments(b *testing.B) {
-	excludeFromTimer(b, func() { TRACE = log.New(ioutil.Discard, "", 0) })
+	excludeFromTimer(b, func() {
+		RevelLog.SetHandler(logger.FuncHandler(func(r *logger.Record) error {
+			return nil
+		}))
+	})
+
 
 	for i := 0; i < b.N; i++ {
 		Message("en", "arguments.string", "Vincent Hanna")
@@ -175,7 +196,12 @@ func BenchmarkI18nMessageWithArguments(b *testing.B) {
 }
 
 func BenchmarkI18nMessageWithFoldingAndArguments(b *testing.B) {
-	excludeFromTimer(b, func() { TRACE = log.New(ioutil.Discard, "", 0) })
+	excludeFromTimer(b, func() {
+		RevelLog.SetHandler(logger.FuncHandler(func(r *logger.Record) error {
+			return nil
+		}))
+	})
+
 
 	for i := 0; i < b.N; i++ {
 		Message("en", "folded.arguments", 12345)
@@ -209,10 +235,11 @@ func loadTestI18nConfigWithUnknowFormatOption(t *testing.T) {
 	Config.Raw().AddOption("DEFAULT", "i18n.unknown_format", "*** %s ***")
 }
 
-func buildRequestWithCookie(name, value string) *Request {
+func buildRequestWithCookie(name, value string) *Controller {
 	httpRequest, _ := http.NewRequest("GET", "/", nil)
-	request := NewRequest(httpRequest)
-	request.AddCookie(&http.Cookie{
+	controller := NewTestController(nil, httpRequest)
+
+	httpRequest.AddCookie(&http.Cookie{
 		Name:       name,
 		Value:      value,
 		Path:       "",
@@ -225,20 +252,22 @@ func buildRequestWithCookie(name, value string) *Request {
 		Raw:        "",
 		Unparsed:   nil,
 	})
-	return request
+	return controller
 }
 
-func buildRequestWithAcceptLanguages(acceptLanguages ...string) *Request {
+func buildRequestWithAcceptLanguages(acceptLanguages ...string) *Controller {
 	httpRequest, _ := http.NewRequest("GET", "/", nil)
-	request := NewRequest(httpRequest)
+	controller := NewTestController(nil, httpRequest)
+
+	request := controller.Request
 	for _, acceptLanguage := range acceptLanguages {
 		request.AcceptLanguages = append(request.AcceptLanguages, AcceptLanguage{acceptLanguage, 1})
 	}
-	return request
+	return controller
 }
 
-func buildEmptyRequest() *Request {
+func buildEmptyRequest() *Controller {
 	httpRequest, _ := http.NewRequest("GET", "/", nil)
-	request := NewRequest(httpRequest)
-	return request
+	controller := NewTestController(nil, httpRequest)
+	return controller
 }
