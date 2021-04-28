@@ -7,11 +7,14 @@ package revel
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"io/ioutil"
 	"mime/multipart"
 	"net/url"
 	"os"
 	"reflect"
+
+	"github.com/Vivino/go-tools/contx"
 )
 
 // Params provides a unified view of the request params.
@@ -63,19 +66,61 @@ func ParseParams(params *Params, req *Request) {
 	case "application/json":
 		fallthrough
 	case "text/json":
-		if body := req.GetBody(); body != nil {
-			if content, err := ioutil.ReadAll(body); err == nil {
-				// We wont bind it until we determine what we are binding too
-				params.JSON = content
-			} else {
-				paramsLogger.Error("ParseParams: Failed to ready request body bytes", "error", err)
-			}
-		} else {
-			paramsLogger.Info("ParseParams: Json post received with empty body")
-		}
+		populateParamsJSON(params, req)
 	}
 
 	params.Values = params.calcValues()
+}
+
+func populateParamsJSON(params *Params, req *Request) {
+	body := req.GetBody()
+	if body == nil {
+		contx.LogFields(req.Context(), "method", req.Method, "url", req.URL).
+			Warn("json post received with empty body")
+		return
+	}
+	content, err := ioutil.ReadAll(LimitReader(body, 1<<20))
+	if err != nil {
+		if !errors.Is(err, io.EOF) {
+			contx.LogCause(req.Context(), err, "method", req.Method, "url", req.URL).
+				Error("failed to read JSON body")
+			params.JSON = nil
+		}
+	}
+	params.JSON = content
+}
+
+type limitReader struct {
+	R io.Reader
+	N int64
+}
+
+// Read is an implementation of io.Reader::Read for limitReader, reading the next chunk
+// of bytes using the inner reader 'R'. If the specified limit is reached, Read returns
+// an error reflecting this.
+func (l *limitReader) Read(p []byte) (int, error) {
+	if int64(len(p)) > l.N {
+		p = p[0:l.N]
+	}
+	n, err := l.R.Read(p)
+	if l.N <= 0 {
+		if err != io.EOF {
+			return n, errors.New("content larger than maximum limit")
+		}
+	}
+
+	l.N -= int64(n)
+	return n, err
+}
+
+var _ io.Reader = &limitReader{}
+
+// LimitReader is a custom implementation of io.LimitReader, which will return and error when the byte
+// stream is larger than the given limit, rather than returning EOF.
+// The limit provided, is an inclusive limit, meaning that should you set the limit to 1MB, the reader
+// will read any file with a size up to, and including 1MB.
+func LimitReader(reader io.Reader, limit int64) io.Reader {
+	return &limitReader{reader, limit + 1}
 }
 
 // Bind looks for the named parameter, converts it to the requested type, and

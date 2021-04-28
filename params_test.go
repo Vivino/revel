@@ -7,6 +7,7 @@ package revel
 import (
 	"bytes"
 	"fmt"
+	"github.com/Vivino/go-api/app/helpers"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -86,6 +87,20 @@ func getMultipartRequest() *http.Request {
 	req.Header.Set(
 		"Content-Length", fmt.Sprintf("%d", len(MultipartFormData)))
 	return req
+}
+
+func TestLimitReader(t *testing.T) {
+	buf := bytes.NewBufferString(helpers.MustRandString(1 << 20))
+	_, err := ioutil.ReadAll(LimitReader(buf, 1<<20))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	buf = bytes.NewBufferString(helpers.MustRandString((1 << 20) + 1))
+	_, err = ioutil.ReadAll(LimitReader(buf, 1<<20))
+	if err == nil {
+		t.Fatal("no error produced trying to read limit a file larger than the read limit")
+	}
 }
 
 func BenchmarkParams(b *testing.B) {
