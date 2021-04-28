@@ -7,10 +7,10 @@ package revel
 import (
 	"fmt"
 	"github.com/revel/revel/session"
+	"github.com/revel/revel/utils"
 	"os"
 	"strconv"
 	"strings"
-	"github.com/revel/revel/utils"
 )
 
 // Revel's variables server, router, etc
