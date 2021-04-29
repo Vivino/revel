@@ -14,9 +14,9 @@ func InitializeFromConfig(basePath string, config *config.Context) (c *Composite
 	// If running in test mode suppress anything that is not an error
 	if config != nil && config.BoolDefault(TEST_MODE_FLAG, false) {
 		// Preconfigure all the options
-		config.SetOption("log.info.output", "none")
-		config.SetOption("log.debug.output", "none")
-		config.SetOption("log.warn.output", "none")
+		config.SetOption("log.debug.output", "off")
+		config.SetOption("log.info.output", "stdout")
+		config.SetOption("log.warn.output", "stdout")
 		config.SetOption("log.error.output", "stderr")
 		config.SetOption("log.crit.output", "stderr")
 	}
