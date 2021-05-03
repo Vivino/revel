@@ -7,12 +7,13 @@ package revel
 import (
 	"bytes"
 	"fmt"
-	"github.com/Vivino/go-api/app/helpers"
 	"io/ioutil"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"reflect"
 	"testing"
+	"unsafe"
 )
 
 // Params: Testing Multipart forms
@@ -60,6 +61,31 @@ zzz
 `
 )
 
+const (
+	letterBytes   = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" // Alphanumeric characters (latin alphabet)
+	letterIdxBits = 6                                                                // 6 bits to represent a letter index
+	letterIdxMask = 1<<letterIdxBits - 1                                             // All 1-bits, as many as letterIdxBits
+	letterIdxMax  = 63 / letterIdxBits                                               // # of letter indices fitting in 63 bits
+)
+
+func mustRandString(t *testing.T, n int) string {
+	t.Helper()
+	b := make([]byte, n)
+	// A src.Int63() generates 63 random bits, enough for letterIdxMax characters
+	for i, cache, remain := n-1, rand.Int63(), letterIdxMax; i >= 0; {
+		if remain == 0 {
+			cache, remain = rand.Int63(), letterIdxMax
+		}
+		if idx := int(cache & letterIdxMask); idx < len(letterBytes) {
+			b[i] = letterBytes[idx]
+			i--
+		}
+		cache >>= letterIdxBits
+		remain--
+	}
+	return *(*string)(unsafe.Pointer(&b))
+}
+
 // The values represented by the form data.
 type fh struct {
 	filename string
@@ -90,13 +116,13 @@ func getMultipartRequest() *http.Request {
 }
 
 func TestLimitReader(t *testing.T) {
-	buf := bytes.NewBufferString(helpers.MustRandString(1 << 20))
+	buf := bytes.NewBufferString(mustRandString(t,1 << 20))
 	_, err := ioutil.ReadAll(LimitReader(buf, 1<<20))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	buf = bytes.NewBufferString(helpers.MustRandString((1 << 20) + 1))
+	buf = bytes.NewBufferString(mustRandString(t, (1 << 20) + 1))
 	_, err = ioutil.ReadAll(LimitReader(buf, 1<<20))
 	if err == nil {
 		t.Fatal("no error produced trying to read limit a file larger than the read limit")
