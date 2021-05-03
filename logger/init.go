@@ -10,34 +10,42 @@ import (
 	"strings"
 )
 
-func InitializeFromConfig(basePath string, config *config.Context) (c *CompositeMultiHandler) {
+func InitializeFromConfig(basePath string, cfg *config.Context) (c *CompositeMultiHandler) {
 	// If running in test mode suppress anything that is not an error
-	if config != nil && config.BoolDefault(TEST_MODE_FLAG, false) {
+	if cfg == nil {
+		cfg = config.NewContext()
+		cfg.SetOption("log.debug.output", "off")
+		cfg.SetOption("log.info.output", "stdout")
+		cfg.SetOption("log.warn.output", "stdout")
+		cfg.SetOption("log.error.output", "stderr")
+		cfg.SetOption("log.crit.output", "stderr")
+	}
+	if cfg != nil && cfg.BoolDefault(TEST_MODE_FLAG, false) {
 		// Preconfigure all the options
-		config.SetOption("log.debug.output", "off")
-		config.SetOption("log.info.output", "stdout")
-		config.SetOption("log.warn.output", "stdout")
-		config.SetOption("log.error.output", "stderr")
-		config.SetOption("log.crit.output", "stderr")
+		cfg.SetOption("log.debug.output", "off")
+		cfg.SetOption("log.info.output", "stdout")
+		cfg.SetOption("log.warn.output", "stdout")
+		cfg.SetOption("log.error.output", "stderr")
+		cfg.SetOption("log.crit.output", "stderr")
 	}
 
 	// If the configuration has an all option we can skip some
 	c, _ = NewCompositeMultiHandler()
 
 	// Filters are assigned first, non filtered items override filters
-	if config != nil && !config.BoolDefault(TEST_MODE_FLAG, false) {
-		initAllLog(c, basePath, config)
+	if cfg != nil && !cfg.BoolDefault(TEST_MODE_FLAG, false) {
+		initAllLog(c, basePath, cfg)
 	}
-	initLogLevels(c, basePath, config)
+	initLogLevels(c, basePath, cfg)
 	if c.CriticalHandler == nil && c.ErrorHandler != nil {
 		c.CriticalHandler = c.ErrorHandler
 	}
-	if config != nil && !config.BoolDefault(TEST_MODE_FLAG, false) {
-		initFilterLog(c, basePath, config)
+	if cfg != nil && !cfg.BoolDefault(TEST_MODE_FLAG, false) {
+		initFilterLog(c, basePath, cfg)
 		if c.CriticalHandler == nil && c.ErrorHandler != nil {
 			c.CriticalHandler = c.ErrorHandler
 		}
-		initRequestLog(c, basePath, config)
+		initRequestLog(c, basePath, cfg)
 	}
 
 	return c
@@ -99,6 +107,7 @@ func initLogLevels(c *CompositeMultiHandler, basePath string, config *config.Con
 	for _, name := range []string{"debug", "info", "warn", "error", "crit",
 		"trace", // TODO trace is deprecated
 	} {
+		fmt.Fprintln(os.Stdout, "setting log level for:", name)
 		if config != nil {
 			extraLogFlag := config.BoolDefault(SPECIAL_USE_FLAG, false)
 			output, found := config.String("log." + name + ".output")
@@ -157,6 +166,7 @@ func initHandlerFor(c *CompositeMultiHandler, output, basePath string, options *
 	}
 
 	output = strings.TrimSpace(output)
+	fmt.Fprintln(os.Stdout, "setting output to:", output)
 	if funcHandler, found := LogFunctionMap[output]; found {
 		funcHandler(c, options)
 	} else {
