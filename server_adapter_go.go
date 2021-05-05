@@ -110,10 +110,6 @@ func (g *GoHttpServer) Start() {
 	wg.Wait()
 
 	//serverLogger.Info("Running Shutdown Hooks.")
-	fmt.Fprintln(os.Stdout, "Running Shutdown Hooks")
-	for _, hook := range shutdownHooks {
-		hook.f()
-	}
 	fmt.Fprintln(os.Stdout, "(Vivino) Revel - Graceful shutdown done.")
 }
 
