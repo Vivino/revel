@@ -1,7 +1,6 @@
 package revel
 
 import (
-	"fmt"
 	"net"
 	"net/http"
 	"time"
