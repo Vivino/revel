@@ -1,6 +1,7 @@
 package revel
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"time"
@@ -129,31 +130,73 @@ func (g *GoHttpServer) handleAppMux(w http.ResponseWriter, r *http.Request) bool
 	return false
 }
 
+type WebSocketContext struct {
+	Request  *http.Request
+	Response http.ResponseWriter
+	context *GoContext
+}
+
+func (w WebSocketContext) GetRaw() interface{} {
+	panic("implement me")
+}
+
+func (w WebSocketContext) Get(theType int) (interface{}, error) {
+	panic("implement me")
+}
+
+func (w WebSocketContext) Set(theType int, theValue interface{}) bool {
+	return true
+}
+
+func (w WebSocketContext) MessageSendJSON(v interface{}) error {
+	panic("implement me")
+}
+
+func (w WebSocketContext) MessageReceiveJSON(v interface{}) error {
+	panic("implement me")
+}
+
+func (w WebSocketContext) MessageSend(v interface{}) error {
+	panic("implement me")
+}
+
+func (w WebSocketContext) MessageReceive(v interface{}) error {
+	panic("implement me")
+}
+
+func (w WebSocketContext) GetRequest() ServerRequest {
+	return w.context.Request
+}
+
+func (w WebSocketContext) GetResponse() ServerResponse {
+	return w.context.Response
+}
+
+var _ ServerContext = WebSocketContext{}
+var _ ServerWebSocket = WebSocketContext{}
+
 // Passes the server request to Revel
 func (g *GoHttpServer) handleMux(w http.ResponseWriter, r *http.Request) {
 	if maxRequestSize := int64(Config.IntDefault("http.maxrequestsize", 0)); maxRequestSize > 0 {
 		r.Body = http.MaxBytesReader(w, r.Body, maxRequestSize)
 	}
 
-	upgrade := r.Header.Get("Upgrade")
 	context := g.goContextStack.Pop().(*GoContext)
 	defer func() {
 		g.goContextStack.Push(context)
 	}()
 	context.Request.SetRequest(r)
 	context.Response.SetResponse(w)
+	upgrade := r.Header.Get("Upgrade")
 
 	if upgrade == "websocket" || upgrade == "Websocket" {
-		websocket.Handler(func(ws *websocket.Conn) {
-			//Override default Read/Write timeout with sane value for a web socket request
-			if err := ws.SetDeadline(time.Now().Add(time.Hour * 24)); err != nil {
-				serverLogger.Error("SetDeadLine failed:", err)
-			}
-			r.Method = "WS"
-			context.Request.WebSocket = ws
-			context.WebSocket = &GoWebSocket{Conn: ws, GoResponse: *context.Response}
-			g.ServerInit.Callback(context)
-		}).ServeHTTP(w, r)
+		r.Method = "WS"
+		wsc := WebSocketContext{
+			Request:  r,
+			Response: w,
+			context:  context,
+		}
+		g.ServerInit.Callback(wsc)
 	} else {
 		g.ServerInit.Callback(context)
 	}

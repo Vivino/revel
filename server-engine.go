@@ -180,7 +180,8 @@ func handleInternal(ctx ServerContext) {
 		req, resp = c.Request, c.Response
 	)
 	c.SetController(ctx)
-	req.WebSocket, _ = ctx.GetResponse().(ServerWebSocket)
+	req.WebSocket, _ = ctx.(ServerWebSocket)
+	//req.WebSocket, _ = ctx.GetResponse().(ServerWebSocket)
 
 	clientIP := ClientIP(req)
 

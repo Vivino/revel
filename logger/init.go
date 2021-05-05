@@ -107,7 +107,6 @@ func initLogLevels(c *CompositeMultiHandler, basePath string, config *config.Con
 	for _, name := range []string{"debug", "info", "warn", "error", "crit",
 		"trace", // TODO trace is deprecated
 	} {
-		fmt.Fprintln(os.Stdout, "setting log level for:", name)
 		if config != nil {
 			extraLogFlag := config.BoolDefault(SPECIAL_USE_FLAG, false)
 			output, found := config.String("log." + name + ".output")
@@ -166,7 +165,6 @@ func initHandlerFor(c *CompositeMultiHandler, output, basePath string, options *
 	}
 
 	output = strings.TrimSpace(output)
-	fmt.Fprintln(os.Stdout, "setting output to:", output)
 	if funcHandler, found := LogFunctionMap[output]; found {
 		funcHandler(c, options)
 	} else {

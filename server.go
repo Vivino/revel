@@ -83,10 +83,10 @@ func Run(port int) {
 	// This is needed for the harness to recognize that the server is started, it looks for the word
 	// "Listening" in the stdout stream
 
-	fmt.Fprintf(os.Stdout, "Revel engine is listening on.. %s\n", ServerEngineInit.Address)
+	fmt.Fprintf(os.Stdout, "(Vivino) Revel engine is listening on.. %s\n", ServerEngineInit.Address)
 	// Start never returns,
 	CurrentEngine.Start()
-	fmt.Fprintf(os.Stdout, "Revel engine is NOT listening on.. %s\n", ServerEngineInit.Address)
+	fmt.Fprintf(os.Stdout, "(Vivino) Revel engine is NOT listening on.. %s\n", ServerEngineInit.Address)
 	RaiseEvent(ENGINE_SHUTDOWN, nil)
 	shutdownHooks.Run()
 	println("\nRevel exited normally\n")
