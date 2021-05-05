@@ -164,6 +164,9 @@ func AddHTTPMux(path string, callback interface{}) {
 
 // Callback point for the server to handle the
 func handleInternal(ctx ServerContext) {
+	wg.Add(1)
+	defer wg.Done()
+
 	start := time.Now()
 	var c *Controller
 	if RevelConfig.Controller.Reuse {

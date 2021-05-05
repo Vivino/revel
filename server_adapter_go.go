@@ -1,8 +1,11 @@
 package revel
 
 import (
+	"fmt"
+	"github.com/facebookgo/grace/gracehttp"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 	"context"
 	"golang.org/x/net/websocket"
@@ -16,6 +19,10 @@ import (
 	"strconv"
 	"strings"
 	"github.com/revel/revel/utils"
+)
+
+var (
+	wg sync.WaitGroup
 )
 
 // Register the GoHttpServer engine
@@ -78,21 +85,36 @@ func (g *GoHttpServer) Start() {
 		time.Sleep(100 * time.Millisecond)
 		serverLogger.Debugf("Start: Listening on %s...", g.Server.Addr)
 	}()
-	if HTTPSsl {
-		if g.ServerInit.Network != "tcp" {
-			// This limitation is just to reduce complexity, since it is standard
-			// to terminate SSL upstream when using unix domain sockets.
-			serverLogger.Fatal("SSL is only supported for TCP sockets. Specify a port to listen on.")
-		}
-		serverLogger.Fatal("Failed to listen:", "error",
-			g.Server.ListenAndServeTLS(HTTPSslCert, HTTPSslKey))
-	} else {
-		listener, err := net.Listen(g.ServerInit.Network, g.Server.Addr)
-		if err != nil {
-			serverLogger.Fatal("Failed to listen:", "error", err)
-		}
-		serverLogger.Warn("Server exiting:", "error", g.Server.Serve(listener))
+	//if HTTPSsl {
+	//	if g.ServerInit.Network != "tcp" {
+	//		// This limitation is just to reduce complexity, since it is standard
+	//		// to terminate SSL upstream when using unix domain sockets.
+	//		serverLogger.Fatal("SSL is only supported for TCP sockets. Specify a port to listen on.")
+	//	}
+	//	serverLogger.Fatal("Failed to listen:", "error",
+	//		g.Server.ListenAndServeTLS(HTTPSslCert, HTTPSslKey))
+	//} else {
+	//	listener, err := net.Listen(g.ServerInit.Network, g.Server.Addr)
+	//	if err != nil {
+	//		serverLogger.Fatal("Failed to listen:", "error", err)
+	//	}
+	//	serverLogger.Warn("Server exiting:", "error", g.Server.Serve(listener))
+	//}
+	if err := gracehttp.Serve(g.Server); err != nil {
+		fmt.Fprintln(os.Stdout, "failed to serve:", err)
+		//serverLogger.Fatal("failed to serve:", err)
 	}
+
+	//serverLogger.Info("waiting for handlers to complete")
+	fmt.Fprintln(os.Stdout, "waiting for handlers to complete")
+	wg.Wait()
+
+	//serverLogger.Info("Running Shutdown Hooks.")
+	fmt.Fprintln(os.Stdout, "Running Shutdown Hooks")
+	for _, hook := range shutdownHooks {
+		hook.f()
+	}
+	fmt.Fprintln(os.Stdout, "(Vivino) Revel - Graceful shutdown done.")
 }
 
 // Handle the request and response for the server
