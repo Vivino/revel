@@ -19,7 +19,7 @@ const (
 	// CurrentLocaleViewArg the key for the current locale view arg value
 	CurrentLocaleViewArg = "currentLocale"
 
-	messageFilesDirectory  = "messages"
+	messageFilesDirectory  = "i18n_messages"
 	messageFilePattern     = `^\w+\.[a-zA-Z]{2}$`
 	defaultUnknownFormat   = "??? %s ???"
 	unknownFormatConfigKey = "i18n.unknown_format"
