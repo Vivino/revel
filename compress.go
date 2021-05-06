@@ -58,7 +58,10 @@ type CompressResponseWriter struct {
 // CompressFilter does compression of response body in gzip/deflate if
 // `results.compressed=true` in the app.conf
 func CompressFilter(c *Controller, fc []Filter) {
-	if c.Response.Out.internalHeader.Server != nil && Config.BoolDefault("results.compressed", false) {
+	clength := c.Response.Out.Header().Get("Content-Length")
+	hasBody := clength != "" && clength != "0"
+
+	if hasBody && c.Response.Out.internalHeader.Server != nil && Config.BoolDefault("results.compressed", false) {
 		if c.Response.Status != http.StatusNoContent && c.Response.Status != http.StatusNotModified {
 			if found, compressType, compressWriter := detectCompressionType(c.Request, c.Response); found {
 				writer := CompressResponseWriter{
