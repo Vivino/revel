@@ -182,9 +182,9 @@ func parseLocaleFromFileName(file string) string {
 
 func init() {
 	OnAppStart(func() {
-		i18nLog.Warn("Vivino (Revel) - has disabled the Revel i18n messages parser.")
-		//loadMessages(filepath.Join(BasePath, messageFilesDirectory))
-		//localeParameterName = Config.StringDefault("i18n.locale.parameter", "")
+		i18nLog.Warn("Vivino (Revel) - i18n set to look for folder i18n_messages (originally: messages)")
+		loadMessages(filepath.Join(BasePath, messageFilesDirectory))
+		localeParameterName = Config.StringDefault("i18n.locale.parameter", "")
 	}, 0)
 }
 
