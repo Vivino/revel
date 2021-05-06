@@ -110,6 +110,16 @@ func InitServerEngine(port int, serverEngine string) {
 	// e.g. unix:/tmp/app.socket or tcp6:::1 (equivalent to tcp6:0:0:0:0:0:0:0:1)
 	if port == 0 {
 		parts := strings.SplitN(address, ":", 2)
+		if len(parts) != 2 {
+			fmt.Fprintf(os.Stdout, `Error initializing (Vivino) Revel server - Invalid configuration parameters:
+	http.addr:  %s
+	http.port: %d
+
+The above combination is assumed to be a fully qualified local address.
+If this is not the case, then please set http.port to something other than: 0
+`, address, port)
+			os.Exit(1)
+		}
 		network = parts[0]
 		localAddress = parts[1]
 	} else {
