@@ -17,6 +17,8 @@ import (
 	"github.com/Vivino/go-tools/contx"
 )
 
+var _50MB int64 = 50<<20
+
 // Params provides a unified view of the request params.
 // Includes:
 // - URL query string
@@ -79,7 +81,7 @@ func populateParamsJSON(params *Params, req *Request) {
 			Warn("json post received with empty body")
 		return
 	}
-	content, err := ioutil.ReadAll(LimitReader(body, 1<<20))
+	content, err := ioutil.ReadAll(LimitReader(body, _50MB))
 	if err != nil {
 		if !errors.Is(err, io.EOF) {
 			contx.LogCause(req.Context(), err, "method", req.Method, "url", req.URL).

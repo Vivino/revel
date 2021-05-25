@@ -68,7 +68,7 @@ const (
 	letterIdxMax  = 63 / letterIdxBits                                               // # of letter indices fitting in 63 bits
 )
 
-func mustRandString(t *testing.T, n int) string {
+func mustRandString(t *testing.T, n int64) string {
 	t.Helper()
 	b := make([]byte, n)
 	// A src.Int63() generates 63 random bits, enough for letterIdxMax characters
@@ -116,14 +116,14 @@ func getMultipartRequest() *http.Request {
 }
 
 func TestLimitReader(t *testing.T) {
-	buf := bytes.NewBufferString(mustRandString(t,1 << 20))
-	_, err := ioutil.ReadAll(LimitReader(buf, 1<<20))
+	buf := bytes.NewBufferString(mustRandString(t, _50MB))
+	_, err := ioutil.ReadAll(LimitReader(buf, _50MB))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	buf = bytes.NewBufferString(mustRandString(t, (1 << 20) + 1))
-	_, err = ioutil.ReadAll(LimitReader(buf, 1<<20))
+	buf = bytes.NewBufferString(mustRandString(t, (_50MB) + 1))
+	_, err = ioutil.ReadAll(LimitReader(buf, _50MB))
 	if err == nil {
 		t.Fatal("no error produced trying to read limit a file larger than the read limit")
 	}
