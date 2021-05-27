@@ -65,9 +65,7 @@ func ParseParams(params *Params, req *Request) {
 			params.Form = mp.GetValues()
 			params.Files = mp.GetFiles()
 		}
-	case "application/json":
-		fallthrough
-	case "text/json":
+	default: // application/json , text/json , EMPTY
 		populateParamsJSON(params, req)
 	}
 
@@ -78,7 +76,7 @@ func populateParamsJSON(params *Params, req *Request) {
 	body := req.GetBody()
 	if body == nil {
 		contx.LogFields(req.Context(), "method", req.Method, "url", req.URL).
-			Warn("json post received with empty body")
+			Debug("json post received with empty body")
 		return
 	}
 	content, err := ioutil.ReadAll(LimitReader(body, _50MB))
@@ -156,7 +154,7 @@ func (p *Params) BindJSON(dest interface{}) error {
 		return errors.New("BindJSON not a pointer")
 	}
 	if err := json.Unmarshal(p.JSON, dest); err != nil {
-		paramsLogger.Warn("BindJSON: Unable to unmarshal request:", "error", err)
+		paramsLogger.Error("BindJSON: Unable to unmarshal request:", "error", err)
 		return err
 	}
 	return nil
