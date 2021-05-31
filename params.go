@@ -65,7 +65,7 @@ func ParseParams(params *Params, req *Request) {
 			params.Form = mp.GetValues()
 			params.Files = mp.GetFiles()
 		}
-	default: // application/json , text/json , EMPTY
+	case "", "text/json", "application/json":
 		populateParamsJSON(params, req)
 	}
 
