@@ -378,7 +378,6 @@ func (h *RevelHeader) GetAll(key string) (values []string) {
 // e.g. From "multipart/form-data; boundary=--" to "multipart/form-data"
 // If none is specified, returns "text/html" by default.
 func ResolveContentType(req *Request) string {
-
 	contentType := req.Header.Get("Content-Type")
 	if contentType == "" {
 		return "text/html"
