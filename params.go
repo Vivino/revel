@@ -65,7 +65,7 @@ func ParseParams(params *Params, req *Request) {
 			params.Form = mp.GetValues()
 			params.Files = mp.GetFiles()
 		}
-	case "", "text/json", "application/json":
+	case "", "text/json", "application/json", "text/html":
 		populateParamsJSON(params, req)
 	}
 
