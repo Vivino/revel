@@ -163,12 +163,12 @@ func (g *GoHttpServer) handleMux(w http.ResponseWriter, r *http.Request) {
 		r.Body = http.MaxBytesReader(w, r.Body, maxRequestSize)
 	}
 
-	context := g.goContextStack.Pop().(*GoContext)
+	ctx := g.goContextStack.Pop().(*GoContext)
 	defer func() {
-		g.goContextStack.Push(context)
+		g.goContextStack.Push(ctx)
 	}()
-	context.Request.SetRequest(r)
-	context.Response.SetResponse(w)
+	ctx.Request.SetRequest(r)
+	ctx.Response.SetResponse(w)
 	upgrade := r.Header.Get("Upgrade")
 
 	if upgrade == "websocket" || upgrade == "Websocket" {
@@ -176,11 +176,11 @@ func (g *GoHttpServer) handleMux(w http.ResponseWriter, r *http.Request) {
 		wsc := WebSocketContext{
 			Request:  r,
 			Response: w,
-			context:  context,
+			context:  ctx,
 		}
 		g.ServerInit.Callback(wsc)
 	} else {
-		g.ServerInit.Callback(context)
+		g.ServerInit.Callback(ctx)
 	}
 }
 
