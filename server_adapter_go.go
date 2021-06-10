@@ -85,31 +85,13 @@ func (g *GoHttpServer) Start() {
 		time.Sleep(100 * time.Millisecond)
 		serverLogger.Debugf("Start: Listening on %s...", g.Server.Addr)
 	}()
-	//if HTTPSsl {
-	//	if g.ServerInit.Network != "tcp" {
-	//		// This limitation is just to reduce complexity, since it is standard
-	//		// to terminate SSL upstream when using unix domain sockets.
-	//		serverLogger.Fatal("SSL is only supported for TCP sockets. Specify a port to listen on.")
-	//	}
-	//	serverLogger.Fatal("Failed to listen:", "error",
-	//		g.Server.ListenAndServeTLS(HTTPSslCert, HTTPSslKey))
-	//} else {
-	//	listener, err := net.Listen(g.ServerInit.Network, g.Server.Addr)
-	//	if err != nil {
-	//		serverLogger.Fatal("Failed to listen:", "error", err)
-	//	}
-	//	serverLogger.Warn("Server exiting:", "error", g.Server.Serve(listener))
-	//}
 	if err := gracehttp.Serve(g.Server); err != nil {
-		fmt.Fprintln(os.Stdout, "failed to serve:", err)
-		//serverLogger.Fatal("failed to serve:", err)
+		serverLogger.Fatal("failed to serve:", err)
 	}
 
-	//serverLogger.Info("waiting for handlers to complete")
-	fmt.Fprintln(os.Stdout, "waiting for handlers to complete")
+	serverLogger.Info("waiting for handlers to complete")
 	wg.Wait()
 
-	//serverLogger.Info("Running Shutdown Hooks.")
 	fmt.Fprintln(os.Stdout, "(Vivino) Revel - Graceful shutdown done.")
 }
 
@@ -153,34 +135,6 @@ type WebSocketContext struct {
 	context *GoContext
 }
 
-func (w WebSocketContext) GetRaw() interface{} {
-	panic("implement me")
-}
-
-func (w WebSocketContext) Get(theType int) (interface{}, error) {
-	panic("implement me")
-}
-
-func (w WebSocketContext) Set(theType int, theValue interface{}) bool {
-	return true
-}
-
-func (w WebSocketContext) MessageSendJSON(v interface{}) error {
-	panic("implement me")
-}
-
-func (w WebSocketContext) MessageReceiveJSON(v interface{}) error {
-	panic("implement me")
-}
-
-func (w WebSocketContext) MessageSend(v interface{}) error {
-	panic("implement me")
-}
-
-func (w WebSocketContext) MessageReceive(v interface{}) error {
-	panic("implement me")
-}
-
 func (w WebSocketContext) GetRequest() ServerRequest {
 	return w.context.Request
 }
@@ -188,6 +142,17 @@ func (w WebSocketContext) GetRequest() ServerRequest {
 func (w WebSocketContext) GetResponse() ServerResponse {
 	return w.context.Response
 }
+
+func (w WebSocketContext) Set(theType int, theValue interface{}) bool { return w.context.Request.Set(theType, theValue) }
+func (w WebSocketContext) Get(theType int) (interface{}, error) { return w.context.Request.Get(theType) }
+
+// Not Implemented
+func (w WebSocketContext) GetRaw() interface{} { panic("implement me") }
+func (w WebSocketContext) MessageSendJSON(v interface{}) error { panic("implement me")}
+func (w WebSocketContext) MessageReceiveJSON(v interface{}) error { panic("implement me") }
+func (w WebSocketContext) MessageSend(v interface{}) error { panic("implement me") }
+func (w WebSocketContext) MessageReceive(v interface{}) error { panic("implement me") }
+
 
 var _ ServerContext = WebSocketContext{}
 var _ ServerWebSocket = WebSocketContext{}
