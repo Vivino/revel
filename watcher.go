@@ -260,7 +260,7 @@ func (w *Watcher) notifyInProcess(listener Listener) (err *Error) {
 		w.lastError = -1
 		w.forceRefresh = false
 	}
-	utilLog.Info("Rebuilt, result", "error", err)
+	//utilLog.Info("Rebuilt, result", "error", err)
 	return
 }
 
