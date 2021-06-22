@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/revel/revel"
+	"github.com/revel/revel/session"
 )
 
 func TestMisc(t *testing.T) {
@@ -31,11 +32,11 @@ func TestMisc(t *testing.T) {
 	if !strings.EqualFold("http://127.0.0.1:9001", testSuite.BaseUrl()) {
 		t.Error("Incorrect BaseUrl http value found.")
 	}
-	revel.HttpSsl = true
+	revel.HTTPSsl = true
 	if !strings.EqualFold("https://127.0.0.1:9001", testSuite.BaseUrl()) {
 		t.Error("Incorrect BaseUrl https value found.")
 	}
-	revel.HttpSsl = false
+	revel.HTTPSsl = false
 
 	// test WebSocketUrl
 	if !strings.EqualFold("ws://127.0.0.1:9001", testSuite.WebSocketUrl()) {
@@ -70,13 +71,19 @@ func TestGetNotFound(t *testing.T) {
 	// testSuite.AssertNotContains("not exists")
 }
 
+// This test is known to fail
 func TestGetCustom(t *testing.T) {
 	testSuite := createNewTestSuite(t)
-	testSuite.GetCustom("http://httpbin.org/get").Send()
+	for x := 0; x < 5; x++ {
+		testSuite.GetCustom("http://httpbin.org/get").Send()
+		if testSuite.Response.StatusCode == http.StatusOK {
+			break
+		}
+		println("Failed request from http://httpbin.org/get", testSuite.Response.StatusCode)
+	}
 
 	testSuite.AssertOk()
 	testSuite.AssertContentType("application/json")
-	testSuite.AssertHeader("Server", "nginx")
 	testSuite.AssertContains("httpbin.org")
 	testSuite.AssertContainsRegex("gzip|deflate")
 }
@@ -136,7 +143,6 @@ func TestPost(t *testing.T) {
 	defer ts.Close()
 
 	testSuite := createNewTestSuite(t)
-	fmt.Println(testSuite.Session.Cookie().Name)
 
 	testSuite.Post("/login",
 		"application/json",
@@ -192,7 +198,7 @@ func TestPostFileUpload(t *testing.T) {
 func createNewTestSuite(t *testing.T) *TestSuite {
 	suite := NewTestSuite()
 
-	if suite.Client == nil || suite.Session == nil {
+	if suite.Client == nil || suite.SessionEngine == nil {
 		t.Error("Unable to create a testsuite")
 	}
 
@@ -210,7 +216,7 @@ func testHandle(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "POST" {
 		if r.URL.Path == "/login" {
 			http.SetCookie(w, &http.Cookie{
-				Name:     "_SESSION",
+				Name:     session.SessionCookieSuffix,
 				Value:    "This is simple session value",
 				Path:     "/",
 				HttpOnly: true,
@@ -282,14 +288,16 @@ func handleFileUpload(w http.ResponseWriter, r *http.Request) {
 
 func createTestServer(fn func(w http.ResponseWriter, r *http.Request)) *httptest.Server {
 	testServer := httptest.NewServer(http.HandlerFunc(fn))
-	revel.Server.Addr = testServer.URL[7:]
+	revel.ServerEngineInit.Address = testServer.URL[7:]
 	return testServer
 }
 
 func init() {
-	if revel.Server == nil {
-		revel.Server = &http.Server{
-			Addr: ":9001",
+	if revel.ServerEngineInit == nil {
+		revel.ServerEngineInit = &revel.EngineInit{
+			Address: ":9001",
+			Network: "http",
+			Port:    9001,
 		}
 	}
 }

@@ -1,20 +1,26 @@
+// Copyright (c) 2012-2016 The Revel Framework Authors, All rights reserved.
+// Revel Framework source code and usage is governed by a MIT style
+// license that can be found in the LICENSE file.
+
 package revel
 
 import (
 	"bytes"
 	"fmt"
 	"io/ioutil"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"reflect"
 	"testing"
+	"unsafe"
 )
 
 // Params: Testing Multipart forms
 
 const (
-	MULTIPART_BOUNDARY  = "A"
-	MULTIPART_FORM_DATA = `--A
+	MultipartBoundary = "A"
+	MultipartFormData = `--A
 Content-Disposition: form-data; name="text1"
 
 data1
@@ -55,6 +61,31 @@ zzz
 `
 )
 
+const (
+	letterBytes   = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" // Alphanumeric characters (latin alphabet)
+	letterIdxBits = 6                                                                // 6 bits to represent a letter index
+	letterIdxMask = 1<<letterIdxBits - 1                                             // All 1-bits, as many as letterIdxBits
+	letterIdxMax  = 63 / letterIdxBits                                               // # of letter indices fitting in 63 bits
+)
+
+func mustRandString(t *testing.T, n int64) string {
+	t.Helper()
+	b := make([]byte, n)
+	// A src.Int63() generates 63 random bits, enough for letterIdxMax characters
+	for i, cache, remain := n-1, rand.Int63(), letterIdxMax; i >= 0; {
+		if remain == 0 {
+			cache, remain = rand.Int63(), letterIdxMax
+		}
+		if idx := int(cache & letterIdxMask); idx < len(letterBytes) {
+			b[i] = letterBytes[idx]
+			i--
+		}
+		cache >>= letterIdxBits
+		remain--
+	}
+	return *(*string)(unsafe.Pointer(&b))
+}
+
 // The values represented by the form data.
 type fh struct {
 	filename string
@@ -76,30 +107,42 @@ var (
 
 func getMultipartRequest() *http.Request {
 	req, _ := http.NewRequest("POST", "http://localhost/path",
-		bytes.NewBufferString(MULTIPART_FORM_DATA))
+		bytes.NewBufferString(MultipartFormData))
 	req.Header.Set(
-		"Content-Type", fmt.Sprintf("multipart/form-data; boundary=%s", MULTIPART_BOUNDARY))
+		"Content-Type", fmt.Sprintf("multipart/form-data; boundary=%s", MultipartBoundary))
 	req.Header.Set(
-		"Content-Length", fmt.Sprintf("%d", len(MULTIPART_FORM_DATA)))
+		"Content-Length", fmt.Sprintf("%d", len(MultipartFormData)))
 	return req
 }
 
-func BenchmarkParams(b *testing.B) {
-	c := Controller{
-		Request: NewRequest(getMultipartRequest()),
-		Params:  &Params{},
+func TestLimitReader(t *testing.T) {
+	buf := bytes.NewBufferString(mustRandString(t, _50MB))
+	_, err := ioutil.ReadAll(LimitReader(buf, _50MB))
+	if err != nil {
+		t.Fatal(err)
 	}
+
+	buf = bytes.NewBufferString(mustRandString(t, (_50MB) + 1))
+	_, err = ioutil.ReadAll(LimitReader(buf, _50MB))
+	if err == nil {
+		t.Fatal("no error produced trying to read limit a file larger than the read limit")
+	}
+}
+
+func BenchmarkParams(b *testing.B) {
+	c := NewTestController(nil, showRequest)
+	c.Params = &Params{}
+
 	for i := 0; i < b.N; i++ {
-		ParamsFilter(&c, NilChain)
+		ParamsFilter(c, NilChain)
 	}
 }
 
 func TestMultipartForm(t *testing.T) {
-	c := Controller{
-		Request: NewRequest(getMultipartRequest()),
-		Params:  &Params{},
-	}
-	ParamsFilter(&c, NilChain)
+	c := NewTestController(nil, getMultipartRequest())
+	c.Params = &Params{}
+
+	ParamsFilter(c, NilChain)
 
 	if !reflect.DeepEqual(expectedValues, map[string][]string(c.Params.Values)) {
 		t.Errorf("Param values: (expected) %v != %v (actual)",
@@ -134,12 +177,12 @@ func TestBind(t *testing.T) {
 }
 
 func TestResolveAcceptLanguage(t *testing.T) {
-	request := buildHttpRequestWithAcceptLanguage("")
+	request := buildHTTPRequestWithAcceptLanguage("")
 	if result := ResolveAcceptLanguage(request); result != nil {
 		t.Errorf("Expected Accept-Language to resolve to an empty string but it was '%s'", result)
 	}
 
-	request = buildHttpRequestWithAcceptLanguage("en-GB,en;q=0.8,nl;q=0.6")
+	request = buildHTTPRequestWithAcceptLanguage("en-GB,en;q=0.8,nl;q=0.6")
 	if result := ResolveAcceptLanguage(request); len(result) != 3 {
 		t.Errorf("Unexpected Accept-Language values length of %d (expected %d)", len(result), 3)
 	} else {
@@ -154,7 +197,7 @@ func TestResolveAcceptLanguage(t *testing.T) {
 		}
 	}
 
-	request = buildHttpRequestWithAcceptLanguage("en;q=0.8,nl;q=0.6,en-AU;q=malformed")
+	request = buildHTTPRequestWithAcceptLanguage("en;q=0.8,nl;q=0.6,en-AU;q=malformed")
 	if result := ResolveAcceptLanguage(request); len(result) != 3 {
 		t.Errorf("Unexpected Accept-Language values length of %d (expected %d)", len(result), 3)
 	} else {
@@ -166,13 +209,15 @@ func TestResolveAcceptLanguage(t *testing.T) {
 
 func BenchmarkResolveAcceptLanguage(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		request := buildHttpRequestWithAcceptLanguage("en-GB,en;q=0.8,nl;q=0.6,fr;q=0.5,de-DE;q=0.4,no-NO;q=0.4,ru;q=0.2")
+		request := buildHTTPRequestWithAcceptLanguage("en-GB,en;q=0.8,nl;q=0.6,fr;q=0.5,de-DE;q=0.4,no-NO;q=0.4,ru;q=0.2")
 		ResolveAcceptLanguage(request)
 	}
 }
 
-func buildHttpRequestWithAcceptLanguage(acceptLanguage string) *http.Request {
+func buildHTTPRequestWithAcceptLanguage(acceptLanguage string) *Request {
 	request, _ := http.NewRequest("POST", "http://localhost/path", nil)
 	request.Header.Set("Accept-Language", acceptLanguage)
-	return request
+	c := NewTestController(nil, request)
+
+	return c.Request
 }

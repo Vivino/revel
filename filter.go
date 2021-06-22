@@ -1,5 +1,10 @@
+// Copyright (c) 2012-2016 The Revel Framework Authors, All rights reserved.
+// Revel Framework source code and usage is governed by a MIT style
+// license that can be found in the LICENSE file.
+
 package revel
 
+// Filter type definition for Revel's filter
 type Filter func(c *Controller, filterChain []Filter)
 
 // Filters is the default set of global filters.
@@ -15,7 +20,8 @@ var Filters = []Filter{
 	I18nFilter,              // Resolve the requested language.
 	InterceptorFilter,       // Run interceptors around the action.
 	CompressFilter,          // Compress the result.
-	ActionInvoker,           // Invoke the action.
+	BeforeAfterFilter,
+	ActionInvoker, // Invoke the action.
 }
 
 // NilFilter and NilChain are helpful in writing filter tests.

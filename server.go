@@ -1,96 +1,48 @@
+// Copyright (c) 2012-2016 The Revel Framework Authors, All rights reserved.
+// Revel Framework source code and usage is governed by a MIT style
+// license that can be found in the LICENSE file.
+
 package revel
 
 import (
 	"fmt"
-	"io"
-	"net/http"
-	"sort"
+	"github.com/revel/revel/session"
+	"github.com/revel/revel/utils"
+	"os"
 	"strconv"
 	"strings"
-	"sync"
-	"time"
-
-	"github.com/facebookgo/grace/gracehttp"
-	"golang.org/x/net/websocket"
 )
 
+// Revel's variables server, router, etc
 var (
 	MainRouter         *Router
 	MainTemplateLoader *TemplateLoader
 	MainWatcher        *Watcher
-	Server             *http.Server
-	wg                 sync.WaitGroup
+	serverEngineMap    = map[string]func() ServerEngine{}
+	CurrentEngine      ServerEngine
+	ServerEngineInit   *EngineInit
+	serverLogger       = RevelLog.New("section", "server")
 )
 
-// This method handles all requests.  It dispatches to handleInternal after
-// handling / adapting websocket connections.
-func handle(w http.ResponseWriter, r *http.Request) {
-	if maxRequestSize := int64(Config.IntDefault("http.maxrequestsize", 0)); maxRequestSize > 0 {
-		r.Body = http.MaxBytesReader(w, r.Body, maxRequestSize)
-	}
-
-	upgrade := r.Header.Get("Upgrade")
-	if upgrade == "websocket" || upgrade == "Websocket" {
-		websocket.Handler(func(ws *websocket.Conn) {
-			//Override default Read/Write timeout with sane value for a web socket request
-			ws.SetDeadline(time.Now().Add(time.Hour * 24))
-			r.Method = "WS"
-			handleInternal(w, r, ws)
-		}).ServeHTTP(w, r)
-	} else {
-		handleInternal(w, r, nil)
-	}
+func RegisterServerEngine(name string, loader func() ServerEngine) {
+	serverLogger.Debug("RegisterServerEngine: Registered engine ", "name", name)
+	serverEngineMap[name] = loader
 }
 
-func handleInternal(w http.ResponseWriter, r *http.Request, ws *websocket.Conn) {
-	// TODO For now this okay to put logger here for all the requests
-	// However, it's best to have logging handler at server entry level
-	start := time.Now()
-
-	wg.Add(1)
-	defer wg.Done()
-	var (
-		req  = NewRequest(r)
-		resp = NewResponse(w)
-		c    = NewController(req, resp)
-	)
-	req.Websocket = ws
-
-	Filters[0](c, Filters[1:])
-	if c.Result != nil {
-		c.Result.Apply(req, resp)
-	} else if c.Response.Status != 0 {
-		c.Response.Out.WriteHeader(c.Response.Status)
-	}
-	// Close the Writer if we can
-	if w, ok := resp.Out.(io.Closer); ok {
-		w.Close()
-	}
-
-	// Revel request access log format
-	// RequestStartTime ClientIP ResponseStatus RequestLatency HTTPMethod URLPath
-	// Sample format:
-	// 2016/05/25 17:46:37.112 127.0.0.1 200  270.157µs GET /
-	requestLog.Printf("%v %v %v %10v %v %v",
-		start.Format(requestLogTimeFormat),
-		ClientIP(r),
-		c.Response.Status,
-		time.Since(start),
-		r.Method,
-		r.URL.Path,
-	)
-}
-
-// InitServer intializes the server and returns the handler
+// InitServer initializes the server and returns the handler
 // It can be used as an alternative entry-point if one needs the http handler
 // to be exposed. E.g. to run on multiple addresses and ports or to set custom
 // TLS options.
-func InitServer() http.HandlerFunc {
-	runStartupHooks()
+func InitServer() {
+	CurrentEngine.Init(ServerEngineInit)
+	initControllerStack()
+	startupHooks.Run()
 
 	// Load templates
 	MainTemplateLoader = NewTemplateLoader(TemplatePaths)
-	MainTemplateLoader.Refresh()
+	if err := MainTemplateLoader.Refresh(); err != nil {
+		serverLogger.Debug("InitServer: Main template loader failed to refresh", "error", err)
+	}
 
 	// The "watch" config variable can turn on and off all watching.
 	// (As a convenient way to control it all together.)
@@ -105,19 +57,52 @@ func InitServer() http.HandlerFunc {
 		MainWatcher.Listen(MainTemplateLoader, MainTemplateLoader.paths...)
 	}
 
-	return http.HandlerFunc(handle)
 }
 
 // Run the server.
 // This is called from the generated main file.
 // If port is non-zero, use that.  Else, read the port from app.conf.
 func Run(port int) {
-	address := HttpAddr
+	defer func() {
+		if r := recover(); r != nil {
+			RevelLog.Crit("Recovered error in startup", "error", r)
+			RaiseEvent(REVEL_FAILURE, r)
+			panic("Fatal error in startup")
+		}
+	}()
+
+	// Initialize the session logger, must be initiated from this app to avoid
+	// circular references
+	session.InitSession(RevelLog)
+
+	// Create the CurrentEngine instance from the application config
+	InitServerEngine(port, Config.StringDefault("server.engine", GO_NATIVE_SERVER_ENGINE))
+	RaiseEvent(ENGINE_BEFORE_INITIALIZED, nil)
+	InitServer()
+	RaiseEvent(ENGINE_STARTED, nil)
+	// This is needed for the harness to recognize that the server is started, it looks for the word
+	// "Listening" in the stdout stream
+
+	fmt.Fprintf(os.Stdout, "(Vivino) Revel engine is listening on.. %s\n", ServerEngineInit.Address)
+	// Start never returns,
+	CurrentEngine.Start()
+	fmt.Fprintf(os.Stdout, "(Vivino) Revel engine is NOT listening on.. %s\n", ServerEngineInit.Address)
+	RaiseEvent(ENGINE_SHUTDOWN, nil)
+	shutdownHooks.Run()
+	println("\nRevel exited normally\n")
+}
+
+// Build an engine initialization object and start the engine
+func InitServerEngine(port int, serverEngine string) {
+	address := HTTPAddr
+	if address == "" {
+		address = "localhost"
+	}
 	if port == 0 {
-		port = HttpPort
+		port = HTTPPort
 	}
 
-	// var network = "tcp"
+	var network = "tcp"
 	var localAddress string
 
 	// If the port is zero, treat the address as a fully qualified local address.
@@ -125,175 +110,54 @@ func Run(port int) {
 	// e.g. unix:/tmp/app.socket or tcp6:::1 (equivalent to tcp6:0:0:0:0:0:0:0:1)
 	if port == 0 {
 		parts := strings.SplitN(address, ":", 2)
-		// network = parts[0]
+		if len(parts) != 2 {
+			fmt.Fprintf(os.Stdout, `Error initializing (Vivino) Revel server - Invalid configuration parameters:
+	http.addr:  %s
+	http.port: %d
+
+The above combination is assumed to be a fully qualified local address.
+If this is not the case, then please set http.port to something other than: 0
+`, address, port)
+			os.Exit(1)
+		}
+		network = parts[0]
 		localAddress = parts[1]
 	} else {
 		localAddress = address + ":" + strconv.Itoa(port)
 	}
 
-	Server = &http.Server{
-		Addr:         localAddress,
-		Handler:      http.HandlerFunc(handle),
-		ReadTimeout:  time.Duration(Config.IntDefault("timeout.read", 0)) * time.Second,
-		WriteTimeout: time.Duration(Config.IntDefault("timeout.write", 0)) * time.Second,
+	if engineLoader, ok := serverEngineMap[serverEngine]; !ok {
+		panic("Server Engine " + serverEngine + " Not found")
+	} else {
+		CurrentEngine = engineLoader()
+		serverLogger.Debug("InitServerEngine: Found server engine and invoking", "name", CurrentEngine.Name())
+		ServerEngineInit = &EngineInit{
+			Address:  localAddress,
+			Network:  network,
+			Port:     port,
+			Callback: handleInternal,
+		}
 	}
-
-	InitServer()
-
-	// Crazy Harness needs this output for "revel run" to work.
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		fmt.Printf("Listening on %s...\n", Server.Addr)
-	}()
-
-	// *** ORIGINAL CODE START
-	// if HttpSsl {
-	// 	if network != "tcp" {
-	// 		// This limitation is just to reduce complexity, since it is standard
-	// 		// to terminate SSL upstream when using unix domain sockets.
-	// 		ERROR.Fatalln("SSL is only supported for TCP sockets. Specify a port to listen on.")
-	// 	}
-	// 	ERROR.Fatalln("Failed to listen:",
-	// 		Server.ListenAndServeTLS(HttpSslCert, HttpSslKey))
-	// } else {
-	// 	listener, err := net.Listen(network, localAddress)
-	// 	if err != nil {
-	// 		ERROR.Fatalln("Failed to listen:", err)
-	// 	}
-	// 	ERROR.Fatalln("Failed to serve:", Server.Serve(listener))
-	// }
-	// *** ORIGINAL CODE END
-
-	Server = &http.Server{
-		Addr:    localAddress,
-		Handler: http.HandlerFunc(handle),
-	}
-
-	if err := gracehttp.Serve(Server); err != nil {
-		ERROR.Fatalln("Failed to serve:", err)
-	}
-
-	INFO.Println("Waiting for handlers to complete.")
-	wg.Wait()
-	INFO.Println("Running Shutdown Hooks.")
-	runShutdownHooks()
-
-	INFO.Println("Exit.")
+	AddInitEventHandler(CurrentEngine.Event)
 }
 
-func runStartupHooks() {
-	sort.Sort(startupHooks)
-	for _, hook := range startupHooks {
-		hook.f()
+// Initialize the controller stack for the application
+func initControllerStack() {
+	RevelConfig.Controller.Reuse = Config.BoolDefault("revel.controller.reuse",true)
+
+	if RevelConfig.Controller.Reuse {
+		RevelConfig.Controller.Stack = utils.NewStackLock(
+			Config.IntDefault("revel.controller.stack", 10),
+			Config.IntDefault("revel.controller.maxstack", 200), func() interface{} {
+				return NewControllerEmpty()
+			})
+		RevelConfig.Controller.CachedStackSize = Config.IntDefault("revel.cache.controller.stack", 10)
+		RevelConfig.Controller.CachedStackMaxSize = Config.IntDefault("revel.cache.controller.maxstack", 100)
+		RevelConfig.Controller.CachedMap = map[string]*utils.SimpleLockStack{}
 	}
 }
 
-type StartupHook struct {
-	order int
-	f     func()
-}
-func runShutdownHooks() {
-	for _, hook := range shutdownHooks {
-		hook()
-	}
-}
-
-var shutdownHooks []func()
-
-type StartupHooks []StartupHook
-
-var startupHooks StartupHooks
-
-func (slice StartupHooks) Len() int {
-	return len(slice)
-}
-
-func (slice StartupHooks) Less(i, j int) bool {
-	return slice[i].order < slice[j].order
-}
-
-func (slice StartupHooks) Swap(i, j int) {
-	slice[i], slice[j] = slice[j], slice[i]
-}
-
-// Register a function to be run at app startup.
-//
-// The order you register the functions will be the order they are run.
-// You can think of it as a FIFO queue.
-// This process will happen after the config file is read
-// and before the server is listening for connections.
-//
-// Ideally, your application should have only one call to init() in the file init.go.
-// The reason being that the call order of multiple init() functions in
-// the same package is undefined.
-// Inside of init() call revel.OnAppStart() for each function you wish to register.
-//
-// Example:
-//
-//      // from: yourapp/app/controllers/somefile.go
-//      func InitDB() {
-//          // do DB connection stuff here
-//      }
-//
-//      func FillCache() {
-//          // fill a cache from DB
-//          // this depends on InitDB having been run
-//      }
-//
-//      // from: yourapp/app/init.go
-//      func init() {
-//          // set up filters...
-//
-//          // register startup functions
-//          revel.OnAppStart(InitDB)
-//          revel.OnAppStart(FillCache)
-//      }
-//
-// This can be useful when you need to establish connections to databases or third-party services,
-// setup app components, compile assets, or any thing you need to do between starting Revel and accepting connections.
-//
-func OnAppStart(f func(), order ...int) {
-	o := 1
-	if len(order) > 0 {
-		o = order[0]
-	}
-	startupHooks = append(startupHooks, StartupHook{order: o, f: f})
-}
-
-// Register a function to be run at app shutdown.
-//
-// The order you register the functions will be the order they are run.
-// You can think of it as a FIFO queue.
-// This process will happen after the server has received a shutdown signal,
-// and after the server has stopped listening for connections.
-//
-// If your application spawns it's own goroutines it will also be responsible
-// for the graceful cleanup of those. Otherwise they will terminate with the main thread.
-//
-// Example:
-//
-//      // from: yourapp/app/controllers/somefile.go
-//      func ShutdownBackgroundDBProcess() {
-//          // waits for background process to complete,
-//          // or sends a signal on a termination channel.
-//      }
-//
-//      func CloseDB() {
-//          // do DB cleanup stuff here
-//      }
-//
-//      // from: yourapp/app/init.go
-//      func init() {
-//          // set up filters...
-//
-//          // register startup functions
-//          revel.OnAppShutdown(ShutdownBackgroundDBProcess)
-//          revel.OnAppShutdown(CloseDB)
-//      }
-//
-// This can be useful when you need to close client connections, files,
-// shutdown or terminate monitors and other goroutines.
-//
-func OnAppShutdown(f func()) {
-	shutdownHooks = append(shutdownHooks, f)
+// Called to stop the server
+func StopServer(value interface{}) EventResponse {
+	return RaiseEvent(ENGINE_SHUTDOWN_REQUEST,value)
 }
